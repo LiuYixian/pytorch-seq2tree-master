@@ -1,5 +1,5 @@
 import random
-#lyx
+
 import numpy as np
 
 import torch
@@ -73,7 +73,7 @@ class DecoderTree_RNNG(BaseRNN):
             sos_id, eos_id,
             n_layers=1, rnn_cell='gru', bidirectional=False,
             input_dropout_p=0, dropout_p=0, use_attention=False, pos_in_nt = None):
-        super(DecoderTree, self).__init__(vocab_size, max_len, hidden_size, input_dropout_p, dropout_p, n_layers,
+        super(DecoderTree_RNNG, self).__init__(vocab_size, max_len, hidden_size, input_dropout_p, dropout_p, n_layers,
                                           rnn_cell)
 
         self.bidirectional_encoder = bidirectional
@@ -93,7 +93,7 @@ class DecoderTree_RNNG(BaseRNN):
         self.init_input = None
         self.embedding_NT = nn.Embedding(self.nt_output_size, self.hidden_size)
         self.embedding = nn.Embedding(self.output_size, self.hidden_size)
-        self.feature2attention = nn.Linear(self.hidden_size, self.hidden_size)
+        self.feature2attention = nn.Linear(self.hidden_size*2, self.hidden_size)
         if use_attention:
             self.attention = Attention(self.hidden_size)
         self.NT_out = nn.Linear(self.hidden_size, self.nt_output_size)
@@ -114,117 +114,112 @@ class DecoderTree_RNNG(BaseRNN):
         predicted_softmax = function(self.out(output.contiguous().view(-1, self.hidden_size))).view(batch_size, output_size, -1)
         return predicted_softmax, hidden, attn
 
-    def generate_sub_tree(self, tgt_sub_tree, sub_root, encoder_outputs, top_structure_info, left_structure_info, loss):
+    def generate_sub_tree(self, tgt_sub_tree, sub_root, encoder_outputs, left_structure_info, loss, function=F.log_softmax,
+                          total=None, acc=None):
+        # tat_sub_tree is the truth tree
+        # sub_root is the target subtree root with root label
         # left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
-        sampling = True
+        sampling = False
         if int(tgt_sub_tree.label()) in self.pos_in_nt:
-            this_feature = self.feature2attention(sub_root.left_structure_info)
+            this_feature = self.feature2attention(torch.cat([left_structure_info, sub_root.semantic_feature], 2))
             if self.use_attention:
                 this_feature, attn = self.attention(this_feature, encoder_outputs)
             this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
             tgt_word = Variable(torch.LongTensor([int(tgt_sub_tree[0])])).view(1, -1)
+            total += 1
+            if this_word.data[0][0] == tgt_word.data[0][0]:
+                acc += 1
             next_word = this_word if sampling else tgt_word
-            left_structure_info, _ = self.layer_rnn(left_structure_info,
+            sub_root.left_structure_info, _ = self.layer_rnn(left_structure_info,
                                                     self.embedding_NT(next_word))
             sub_root.append(next_word.data[0][0])
             loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
-            
-        for sub_tree in tgt_sub_tree:
+            return loss, sub_root.left_structure_info, total, acc
+        for sub_id , sub_tree in enumerate(tgt_sub_tree):
+            this_feature = self.feature2attention(torch.cat([left_structure_info, sub_root.semantic_feature],2))
+            if self.use_attention:
+                this_feature, attn = self.attention(this_feature, encoder_outputs)
+            this_NT = function(self.NT_out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
+            tgt_NT = Variable(torch.LongTensor([int(sub_tree.label())])).view(1, -1)
+            total += 1
+            if this_NT.data[0][0] == tgt_NT.data[0][0]:
+                acc += 1
+            next_NT = this_NT if sampling else tgt_NT
+            loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), tgt_NT[0])
+
+            left_structure_info, _ = self.layer_rnn(left_structure_info,
+                                                    self.embedding_NT(next_NT))
+            new_tree = Tree_with_para(next_NT.data[0][0], [], layer_feature=left_structure_info,
+                                      semantic_feature=this_feature, parent=sub_root, att=attn)
+            sub_root.append(new_tree)
+            loss, left_structure_info, total, acc = self.generate_sub_tree(sub_tree, new_tree, encoder_outputs, left_structure_info,
+                                                               loss, total = total, acc = acc)
+        return loss, left_structure_info, total, acc
+
+    def generate_sub_tree_eva(self, sub_root, encoder_outputs, left_structure_info, function=F.log_softmax):
+        # tat_sub_tree is the truth tree
+        # sub_root is the target subtree root with root label
+        # left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
+        sampling = True
+        if int(sub_root.label())==2:
+            return left_structure_info
+        if int(sub_root.label()) in self.pos_in_nt:
+            this_feature = self.feature2attention(torch.cat([left_structure_info, sub_root.semantic_feature], 2))
+            if self.use_attention:
+                this_feature, attn = self.attention(this_feature, encoder_outputs)
+            this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
+            next_word = this_word
+            sub_root.left_structure_info, _ = self.layer_rnn(left_structure_info,
+                                                    self.embedding_NT(next_word))
+            sub_root.append(next_word.data[0][0])
+            return sub_root.left_structure_info
+        for sub_id in range(10):
+            this_feature = self.feature2attention(torch.cat([left_structure_info, sub_root.semantic_feature],2))
+            if self.use_attention:
+                this_feature, attn = self.attention(this_feature, encoder_outputs)
+            this_NT = function(self.NT_out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
+            next_NT = this_NT
+            left_structure_info, _ = self.layer_rnn(left_structure_info,
+                                                    self.embedding_NT(next_NT))
+            new_tree = Tree_with_para(next_NT.data[0][0], [], layer_feature=left_structure_info,
+                                      semantic_feature=this_feature, parent=sub_root, att=attn)
+            sub_root.append(new_tree)
+            left_structure_info = self.generate_sub_tree_eva(new_tree, encoder_outputs, left_structure_info)
+            if this_NT.data[0, 0] == 2:
+                break
+        return left_structure_info
+
 
 
 
 
     def forward(self, inputs=None, encoder_hidden=None, encoder_outputs=None,
                     function=F.log_softmax, teacher_forcing_ratio=0, trees = None, loss= None):
-
+        acc = 0
+        total = 0
         decoder_hidden = self._init_state(encoder_hidden)
-
-        use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-
-        use_teacher_forcing = False
-        # Manual unrolling is used to support random teacher forcing.
-        # If teacher_forcing_ratio is True or False instead of a probability, the unrolling can be done in graph
-
-
         sampling = True
-        top_structure_info = Variable(torch.zeros(1, 1, self.hidden_size * 2))
         left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
         semantic_info = decoder_hidden
         this_feature = self.feature2attention(
-            torch.cat((top_structure_info, left_structure_info, semantic_info), 2))
+            torch.cat(( left_structure_info, semantic_info), 2))
         if self.use_attention:
             this_feature, attn = self.attention(this_feature, encoder_outputs)
         this_NT = self.NT_out(this_feature).topk(1)[1].view(1, -1)
         tgt_NT = Variable(torch.LongTensor([int(trees.label())])).view(1, -1)
+        total += 1
+        if this_NT.data[0][0]==tgt_NT.data[0][0]:
+            acc +=1
         next_NT = this_NT if sampling else tgt_NT
         loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), tgt_NT[0])
         pre_tree = Tree_with_para(next_NT.data[0][0], [],
                                   depth_feature=torch.cat([self.embedding_NT(next_NT), self.embedding_NT(next_NT)],
                                                           1).view(1, 1, -1),
-                                  semantic_featrue=semantic_info, att=attn)
-        tgt_tree = Tree_with_para(trees.label(), [],
-                                  depth_feature=torch.cat([self.embedding_NT(tgt_NT), self.embedding_NT(tgt_NT)],
-                                                          1).view(1, 1, -1),
-                                  semantic_featrue=semantic_info, att=attn)
-        sub_trees = [trees]  # sub_tree in obj layer
-        pre_sub_trees = [pre_tree]  # sub_tree_with para in obj layer
+                                  semantic_feature=semantic_info, att=attn)
 
-        for i in range(trees.height() - 1):
-            next_sub_trees = []  # sub_tree in next layer
-            next_pre_trees = []  # sub_tree_with para in next layer
-            left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
+        loss, left_structure_info, total, acc = self.generate_sub_tree(trees, pre_tree, encoder_outputs, left_structure_info,
+                                                           loss, total = total, acc = acc)
 
-            for id, obj_tree in enumerate(sub_trees):
-                pre_obj_tree = pre_sub_trees[id]
-                top_structure_info = pre_obj_tree.depth_feature
-                semantic_info = pre_obj_tree.semantic_feature
-
-                if int(obj_tree.label()) in self.pos_in_nt:
-                    # generate from Pos_tag
-                    this_feature = self.feature2attention(torch.cat((top_structure_info,
-                                                                     left_structure_info, semantic_info), 2))
-                    if self.use_attention:
-                        this_feature, attn = self.attention(this_feature, encoder_outputs)
-                    this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-                    tgt_word = Variable(torch.LongTensor([int(obj_tree[0])])).view(1, -1)
-                    next_word = this_word if sampling else tgt_word
-                    left_structure_info, _ = self.layer_rnn(left_structure_info,
-                                                            self.embedding(next_word))
-                    pre_obj_tree.append(next_word.data[0][0])
-                    loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
-                else:
-                    for sub_id in range(len(obj_tree)):
-                        # generate from nonterminal
-                        this_feature = self.feature2attention(torch.cat((top_structure_info,
-                                                                         left_structure_info, semantic_info), 2))
-                        if self.use_attention:
-                            this_feature, attn = self.attention(this_feature, encoder_outputs)
-                        this_NT = function(self.NT_out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-                        target_NT = Variable(torch.LongTensor([int(obj_tree[sub_id].label())])).view(1, -1)
-                        next_NT = this_NT if sampling else tgt_NT
-                        loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), target_NT[0])
-
-                        left_structure_info, _ = self.layer_rnn(left_structure_info,
-                                                                self.embedding_NT(next_NT))
-                        new_tree = Tree_with_para(next_NT.data[0][0], [], layer_feature=left_structure_info,
-                                                  semantic_featrue=this_feature, parent=pre_obj_tree, att=attn)
-                        pre_obj_tree.append(new_tree)
-                        next_pre_trees.append(new_tree)
-                        next_sub_trees.append(obj_tree[sub_id])
-                        if next_NT.data[0, 0] == 2:
-                            break
-            if len(next_pre_trees) > 0:
-                layer_feature = torch.cat([sub_tree.layer_feature for sub_tree in next_pre_trees], 1)
-                layer_bi_feature = self.layer_bi_rnn(layer_feature)[0]
-                for j, tree in enumerate(next_pre_trees):
-                    tree.bi_layer_feature = layer_bi_feature[:, j, :].unsqueeze(1)
-                    tree.depth_feature = self.depth_rnn(tree.parent.depth_feature, tree.bi_layer_feature)[0]
-                sub_trees = next_sub_trees
-                pre_sub_trees = next_pre_trees
-
-        # schedule sampling
-
-        ret_dict = pre_tree
         return pre_tree, loss
 
     def evaluate(self, inputs=None, encoder_hidden=None, encoder_outputs=None,
@@ -232,12 +227,10 @@ class DecoderTree_RNNG(BaseRNN):
 
         decoder_hidden = self._init_state(encoder_hidden)
         sampling = True
-
-        top_structure_info = Variable(torch.zeros(1, 1, self.hidden_size * 2))
         left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
         semantic_info = decoder_hidden
         this_feature = self.feature2attention(
-            torch.cat((top_structure_info, left_structure_info, semantic_info), 2))
+            torch.cat((left_structure_info, semantic_info), 2))
         if self.use_attention:
             this_feature, attn = self.attention(this_feature, encoder_outputs)
         this_NT = self.NT_out(this_feature).topk(1)[1].view(1, -1)
@@ -245,59 +238,10 @@ class DecoderTree_RNNG(BaseRNN):
         pre_tree = Tree_with_para(next_NT.data[0][0], [],
                                   depth_feature=torch.cat([self.embedding_NT(next_NT), self.embedding_NT(next_NT)],
                                                           1).view(1, 1, -1),
-                                  semantic_featrue=semantic_info, att=attn)
-        pre_sub_trees = [pre_tree]  # sub_tree_with para in obj layer
+                                  semantic_feature=semantic_info, att=attn)
 
-        for i in range(30):
-            next_pre_trees = []  # sub_tree_with para in next layer
-            left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
+        left_structure_info = self.generate_sub_tree_eva(pre_tree, encoder_outputs, left_structure_info)
 
-            for id, pre_obj_tree in enumerate(pre_sub_trees):
-                top_structure_info = pre_obj_tree.depth_feature
-                semantic_info = pre_obj_tree.semantic_feature
-                if pre_obj_tree.label()==2:
-                    continue
-                if int(pre_obj_tree.label()) in self.pos_in_nt:
-                    # generate from Pos_tag
-                    this_feature = self.feature2attention(torch.cat((top_structure_info,
-                                                                     left_structure_info, semantic_info), 2))
-                    if self.use_attention:
-                        this_feature, attn = self.attention(this_feature, encoder_outputs)
-                    this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-                    next_word = this_word
-                    left_structure_info, _ = self.layer_rnn(left_structure_info,
-                                                            self.embedding_NT(next_NT))
-                    pre_obj_tree.append(next_word.data[0][0])
-                else:
-                    for sub_id in range(10):
-                        # generate from nonterminal
-                        this_feature = self.feature2attention(torch.cat((top_structure_info,
-                                                                         left_structure_info, semantic_info), 2))
-                        if self.use_attention:
-                            this_feature, attn = self.attention(this_feature, encoder_outputs)
-                        this_NT = function(self.NT_out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-                        next_NT = this_NT
-
-                        left_structure_info, _ = self.layer_rnn(left_structure_info,
-                                                                self.embedding_NT(next_NT))
-                        new_tree = Tree_with_para(next_NT.data[0][0], [], layer_feature=left_structure_info,
-                                                  semantic_featrue=this_feature, parent=pre_obj_tree, att=attn)
-                        pre_obj_tree.append(new_tree)
-                        next_pre_trees.append(new_tree)
-                        if next_NT.data[0, 0] == 2:
-                            break
-            if len(next_pre_trees) > 0:
-                layer_feature = torch.cat([sub_tree.layer_feature for sub_tree in next_pre_trees], 1)
-                layer_bi_feature = self.layer_bi_rnn(layer_feature)[0]
-                for j, tree in enumerate(next_pre_trees):
-                    tree.bi_layer_feature = layer_bi_feature[:, j, :].unsqueeze(1)
-                    tree.depth_feature = self.depth_rnn(tree.parent.depth_feature, tree.bi_layer_feature)[0]
-            pre_sub_trees = next_pre_trees
-            # else:
-            #     break
-        # schedule sampling
-
-        ret_dict = pre_tree
         return pre_tree, loss
 
     def _init_state(self, encoder_hidden):

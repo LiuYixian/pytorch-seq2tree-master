@@ -28,7 +28,20 @@ class Evaluator(object):
 
         return right/len(target)
 
-
+    def compare(self, tree, tgt_tree):
+        right = 0
+        total = 0
+        if int(tree.label()) == int(tgt_tree.label()):
+            right += 1
+        total += 1
+        for id, tgt_sub_tree in enumerate(tgt_tree):
+            if id > len(tree) - 1 or isinstance(tgt_sub_tree, str) or isinstance(tree[id], str):
+                break
+            sub_tree = tree[id]
+            sub_right, sub_total = self.compare(sub_tree, tgt_sub_tree)
+            right += sub_right
+            total += sub_total
+        return right, total
 
     def evaluate(self, model, data):
         """ Evaluate a model on given dataset and return performance.
@@ -72,8 +85,10 @@ class Evaluator(object):
                     total += non_padding.sum().data[0]
             else:
                 trees = getattr(batch, seq2seq.tree_field_name)
-                tree, loss = model.evaluate(input_variables, input_lengths.tolist(),
+                tree, loss = model(input_variables, input_lengths.tolist(),
                                                                target_variables, trees = trees, loss = loss)
+                right, total = self.compare(tree, trees)
+                tree_acc = right / max(len([a for a in trees.subtrees()]), len([a for a in tree.subtrees()]))
                 target = [int(a) for a in trees.leaves()]
                 pre = [int(a) for a in tree.leaves()]
                 for id, p in enumerate(target):
@@ -92,4 +107,4 @@ class Evaluator(object):
         else:
             accuracy = match / total
 
-        return loss.get_loss(), accuracy
+        return loss.get_loss(), accuracy, tree_acc

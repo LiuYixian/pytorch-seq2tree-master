@@ -33,15 +33,15 @@ class EncoderRNN(BaseRNN):
 
     """
 
-    def __init__(self, vocab_size, max_len, hidden_size,
+    def __init__(self, vocab_size, word_embedding_size,  max_len, hidden_size,
             input_dropout_p=0, dropout_p=0,
             n_layers=1, bidirectional=False, rnn_cell='gru', variable_lengths=False):
         super(EncoderRNN, self).__init__(vocab_size, max_len, hidden_size,
                 input_dropout_p, dropout_p, n_layers, rnn_cell)
-
+        self.word_embeeding_size = word_embedding_size
         self.variable_lengths = variable_lengths
-        self.embedding = nn.Embedding(vocab_size, hidden_size)
-        self.rnn = self.rnn_cell(hidden_size, hidden_size, n_layers,
+        self.embedding = nn.Embedding(vocab_size, word_embedding_size)
+        self.rnn = self.rnn_cell(word_embedding_size, hidden_size, n_layers,
                                  batch_first=True, bidirectional=bidirectional, dropout=dropout_p)
 
     def forward(self, input_var, input_lengths=None):

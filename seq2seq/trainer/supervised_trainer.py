@@ -27,13 +27,14 @@ class SupervisedTrainer(object):
     """
     def __init__(self, expt_dir='experiment', loss=NLLLoss(), batch_size=64,
                  random_seed=None,
-                 checkpoint_every=100, print_every=100):
+                 checkpoint_every=100, print_every=100, lr = 1e-4):
         self._trainer = "Simple Trainer"
         self.random_seed = random_seed
         if random_seed is not None:
             random.seed(random_seed)
             torch.manual_seed(random_seed)
         self.loss = loss
+        self.lr = lr
         self.evaluator = Evaluator(loss=self.loss, batch_size=batch_size)
         self.optimizer = None
         self.checkpoint_every = checkpoint_every
@@ -94,6 +95,12 @@ class SupervisedTrainer(object):
         step = start_step
         step_elapsed = 0
         for epoch in range(start_epoch, n_epochs + 1):
+            if epoch == 3:
+                for param_group in self.optimizer.optimizer.param_groups:
+                    param_group['lr'] = max(1e-4, self.lr * (0.5 ** (1)))  # 10
+            if epoch >3:
+                for param_group in self.optimizer.optimizer.param_groups:
+                    param_group['lr'] = max(1e-5, 0.5 * self.lr * (0.5 ** ((epoch - 3) // 2)))  # 10
             log.debug("Epoch: %d, Step: %d" % (epoch, step))
 
             batch_generator = batch_iterator.__iter__()
@@ -128,7 +135,7 @@ class SupervisedTrainer(object):
                     log.info(log_msg)
 
                 Checkpoint
-                if step % self.checkpoint_every == 0 or step == total_steps:
+                if (step % self.checkpoint_every == 0 or step == total_steps) and self.expt_dir is not None:
                     Checkpoint(model=model,
                                optimizer=self.optimizer,
                                epoch=epoch, step=step,
@@ -141,9 +148,9 @@ class SupervisedTrainer(object):
             epoch_loss_total = 0
             log_msg = "Finished epoch %d: Train %s: %.4f" % (epoch, self.loss.name, epoch_loss_avg)
             if dev_data is not None:
-                dev_loss, accuracy = self.evaluator.evaluate(model, dev_data)
+                dev_loss, accuracy, tree_acc = self.evaluator.evaluate(model, dev_data)
                 self.optimizer.update(dev_loss, epoch)
-                log_msg += ", Dev %s: %.4f, Accuracy: %.4f" % (self.loss.name, dev_loss, accuracy)
+                log_msg += ", Dev %s: %.4f, Accuracy: %.4f, Tree_acc: %.4f" % (self.loss.name, dev_loss, accuracy, tree_acc)
                 model.train(mode=True)
             else:
                 self.optimizer.update(epoch_loss_avg, epoch)

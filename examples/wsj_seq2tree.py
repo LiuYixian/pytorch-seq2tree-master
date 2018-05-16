@@ -22,30 +22,33 @@ import pickle
 
 def type_in():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--train_path', action='store', dest='train_path',
+    parser.add_argument('--train-path', action='store', dest='train_path',
                         help='Path to train data')
-    parser.add_argument('--dev_path', action='store', dest='dev_path',
+    parser.add_argument('--dev-path', action='store', dest='dev_path',
                         help='Path to dev data')
-    parser.add_argument('--expt_dir', action='store', dest='expt_dir', default='./experiment',
+    parser.add_argument('--expt-dir', action='store', dest='expt_dir', default='./experiment',
                         help='Path to experiment directory. If load_checkpoint is True, then path to checkpoint directory has to be provided')
-    parser.add_argument('--load_checkpoint', action='store', dest='load_checkpoint',
+    parser.add_argument('--load-checkpoint', action='store', dest='load_checkpoint',
                         help='The name of the checkpoint to load, usually an encoded time string')
     parser.add_argument('--resume', action='store_true', dest='resume',
                         default=False,
                         help='Indicates if training has to be resumed from the latest checkpoint')
-    parser.add_argument('--GPU', default=-1, dest='GPU')
+    parser.add_argument('--GPU', default=-1, dest='GPU', type=int)
     parser.add_argument('--log-level', dest='log_level',
                         default='info',
                         help='Logging level.')
-    parser.add_argument('--epoch', default=10, dest='epoch')
-    parser.add_argument('--max-len', default=20, dest='max_len')
-    parser.add_argument('--hidden-size', default=300, dest='hidden_size')
+    parser.add_argument('--epoch', default=10, dest='epoch', type=int)
+    parser.add_argument('--max-len', default=20, dest='max_len', type=int)
+    parser.add_argument('--hidden-size', default=100, dest='hidden_size', type=int)
+    parser.add_argument('--word-embeeding-size', default=100, dest='word_embedding_size', type=int)
+    parser.add_argument('--nt-embeeding-size', default=100, dest='nt_embedding_size', type=int)
     parser.add_argument('--word-embedding', default=None, dest='word_embedding')
-    parser.add_argument('--batch-size', default=1, dest='batch_size')
-    parser.add_argument('--checkpoint-every', default=50, dest='checkpoint_every')
-    parser.add_argument('--print-every', default=10, dest='print_every')
+    parser.add_argument('--batch-size', default=1, dest='batch_size', type=int)
+    parser.add_argument('--checkpoint-every', default=50, dest='checkpoint_every', type=int)
+    parser.add_argument('--print-every', default=10, dest='print_every', type=int)
     parser.add_argument('--bidirectional-encoder', default=True, dest='bidirectional_encoder')
-    parser.add_argument('--learning-rate', default=1e-4, dest='learning_rate')
+    parser.add_argument('--lr', default=1e-4, dest='lr', type=float)
+    parser.add_argument('--drop-out', default=0.2, dest = 'drop_out', type=float)
     opt = parser.parse_args()
     return opt
 
@@ -74,16 +77,15 @@ def train(opt):
             return len(example.src) <= max_len
         train = torchtext.data.TabularDataset(
             path=opt.train_path, format='tsv',
-            fields=[('src', src), ('nt', nt), ('pos', pos), ('tree', tgt_tree) ],
+            fields=[('src', src), ('nt', nt), ('pos', pos), ('tree', tgt_tree)],
             filter_pred=len_filter
         )
         dev = torchtext.data.TabularDataset(
             path=opt.dev_path, format='tsv',
-            fields=[('src', src), ('nt', nt), ('pos', pos), ('tree', tgt_tree) ],
+            fields=[('src', src), ('nt', nt), ('pos', pos), ('tree', tgt_tree)],
             filter_pred=len_filter
         )
         src.build_vocab(train, max_size=50000)
-        tgt.build_vocab(train, max_size=50000)
         comp.build_vocab(train, max_size=50000)
         nt.build_vocab(train, max_size=50000)
         pos.build_vocab(train, max_size=50000)
@@ -92,7 +94,7 @@ def train(opt):
         for Pos in pos.vocab.stoi:
             if nt.vocab.stoi[Pos] > 1:
                 pos_in_nt.add(nt.vocab.stoi[Pos])
-        hidden_size = 300
+        hidden_size = opt.hidden_size
         input_vocab = src.vocab
         nt_vocab = nt.vocab
         def tree_to_id(tree):
@@ -106,9 +108,16 @@ def train(opt):
                 tree.append(Tree(nt_vocab.stoi['<eos>'],[]))
                 return tree
 
-        train.examples = [str(tree_to_id(Tree.fromstring(ex.tree))) for ex in train.examples]
-        dev.examples = [str(tree_to_id(Tree.fromstring(ex.tree))) for ex in dev.examples]
-        input_vocab.load_vectors(['glove.840B.300d'])
+        # train.examples = [str(tree_to_id(ex.tree)) for ex in train.examples]
+        # dev.examples = [str(tree_to_id(ex.tree)) for ex in dev.examples]
+        for ex in train.examples:
+            ex.tree = str(tree_to_id(Tree.fromstring(ex.tree)))
+        for ex in dev.examples:
+            ex.tree = str(tree_to_id(Tree.fromstring(ex.tree)))
+        # train.examples = [tree_to_id(Tree.fromstring(ex.tree)) for ex in train.examples]
+        # dev.examples = [str(tree_to_id(Tree.fromstring(ex.tree))) for ex in dev.examples]
+        if opt.word_embedding is not None:
+            input_vocab.load_vectors([opt.word_embedding])
 
         loss = NLLLoss()
         if torch.cuda.is_available():
@@ -117,12 +126,13 @@ def train(opt):
         seq2tree = None
         if not opt.resume:
             # Initialize model
-            bidirectional = opt.bidirection_encoder
-            encoder = EncoderRNN(len(src.vocab), max_len, hidden_size,
+            bidirectional = opt.bidirectional_encoder
+            encoder = EncoderRNN(len(src.vocab), opt.word_embedding_size, max_len, hidden_size,
                                  bidirectional=bidirectional, variable_lengths=True)
-            decoder = DecoderTree(len(src.vocab), len(nt.vocab),max_len, hidden_size * 2 if bidirectional else hidden_size,
+            decoder = DecoderTree(len(src.vocab), opt.word_embedding_size, opt.nt_embedding_size, len(nt.vocab),
+                                  max_len, hidden_size * 2 if bidirectional else hidden_size,
                                  dropout_p=0.2, use_attention=True, bidirectional=bidirectional,
-                                 eos_id=nt.vocab.stoi['<eos>'], sos_id=nt.vocab.stoi['<sos>'], pos_in_nt = pos_in_nt)
+                                  pos_in_nt = pos_in_nt)
 
             seq2tree = Seq2tree(encoder, decoder)
             if torch.cuda.is_available():
@@ -140,27 +150,36 @@ def train(opt):
             # scheduler = StepLR(optimizer.optimizer, 1)
             # optimizer.set_scheduler(scheduler)
 
-        optimizer = Optimizer(optim.Adam(seq2tree.parameters(), lr=1e-4), max_grad_norm=5)
+        optimizer = Optimizer(optim.Adam(seq2tree.parameters(), lr=opt.lr), max_grad_norm=5)
         # train
-        t = SupervisedTrainer(loss=loss, batch_size=1,
-                              checkpoint_every=50,
-                              print_every=10, expt_dir=opt.expt_dir)
+        t = SupervisedTrainer(loss=loss, batch_size=opt.batch_size,
+                              checkpoint_every=opt.checkpoint_every,
+                              print_every=10, expt_dir=opt.expt_dir, lr=opt.lr)
 
         seq2tree = t.train(seq2tree, train,
-                          num_epochs=20, dev_data=dev,
+                          num_epochs=opt.epoch, dev_data=dev,
                           optimizer=optimizer,
-                          teacher_forcing_ratio=0.5,
+                          teacher_forcing_ratio=0,
                           resume=opt.resume)
 
-    predictor = Predictor(seq2tree, input_vocab, output_vocab)
+    predictor = Predictor(seq2tree, input_vocab, nt_vocab)
     return predictor
 def predict(predictor):
     while True:
-        seq_str = input("Type in a source sequence:")
-        if seq_str == ':end':
-            break
-        seq = seq_str.strip().split()
-        print(predictor.predict(seq))
+        tree_or_sentence = input("Type in a tree or a sentence?")
+        if tree_or_sentence != 'tree':
+            seq_str = input("Type in a source sequence:")
+            if seq_str == ':end':
+                break
+            seq = seq_str.strip().split()
+            print(predictor.predict(seq))
+        else:
+            tree_str = input("Type in a source sequence:")
+            tree = Tree.fromstring(tree_str)
+            seq = tree.leaves()
+            print(predictor.predict(seq,tree))
+
+
 if __name__=='__main__':
     opt = type_in()
     predictor = train(opt)

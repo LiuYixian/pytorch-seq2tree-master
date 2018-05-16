@@ -127,16 +127,6 @@ else:
 
     #
     input_vocab.vectors[input_vocab.stoi['<unk>']] = torch.Tensor(hidden_size).uniform_(-0.8,0.8)#<unk>
-    # input_vocab.vectors[input_vocab.stoi['<pad>']] = torch.Tensor(hidden_size).uniform_(-0.8,0.8)#<pad>
-    # output_vocab.vectors[output_vocab.stoi['<pad>']] = torch.Tensor(hidden_size).uniform_(-0.8,0.8)#<unk>
-    # output_vocab.vectors[output_vocab.stoi['<sos>']] = torch.Tensor(hidden_size).uniform_(-0.8,0.8)#<sos>
-    # output_vocab.vectors[output_vocab.stoi['<eos>']] = torch.Tensor(hidden_size).uniform_(-0.8,0.8)#<eos>
-
-    # NOTE: If the source field name and the target field name
-    # are different from 'src' and 'tgt' respectively, they have
-    # to be set explicitly before any training or inference
-    # seq2seq.src_field_name = 'src'
-    # seq2seq.tgt_field_name = 'tgt'
 
     # Prepare loss
 

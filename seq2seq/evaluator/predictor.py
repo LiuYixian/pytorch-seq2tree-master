@@ -1,9 +1,11 @@
 import torch
 from torch.autograd import Variable
 import seq2seq
+from nltk.tree import Tree
+from copy import deepcopy
 class Predictor(object):
 
-    def __init__(self, model, src_vocab, tgt_vocab):
+    def __init__(self, model, src_vocab, nt_vocab):
         """
         Predictor class to evaluate for a given model.
         Args:
@@ -18,10 +20,33 @@ class Predictor(object):
             self.model = model.cpu()
         self.model.eval()
         self.src_vocab = src_vocab
-        self.tgt_vocab = tgt_vocab
+        self.nt_vocab = nt_vocab
 
+    def tree_to_id(self, tree):
+        for sub_tree in tree.subtrees():
+            if isinstance(sub_tree.label(), str):
+                continue
+            if int(sub_tree.label()) > 2:
+                sub_tree.set_label(self.nt_vocab.itos[int(sub_tree.label())])
+                if not isinstance(sub_tree[0], Tree):
+                    sub_tree[0] = self.src_vocab.itos[int(sub_tree[0])]
+        return tree
+    def compare(self, tree, tgt_tree):
+        right = 0
+        total = 0
+        if tree.label() == tgt_tree.label():
+            right += 1
+        total += 1
+        for id, tgt_sub_tree in enumerate(tgt_tree):
+            if id > len(tree) - 1 or isinstance(tgt_sub_tree, str) or isinstance(tree[id], str):
+                break
+            sub_tree = tree[id]
+            sub_right, sub_total = self.compare(sub_tree, tgt_sub_tree)
+            right += sub_right
+            total += sub_total
+        return right, total
 
-    def predict(self, src_seq):
+    def predict(self, src_seq, tgt_tree = None):
         """ Make prediction given `src_seq` as input.
 
         Args:
@@ -36,8 +61,13 @@ class Predictor(object):
         if torch.cuda.is_available():
             src_id_seq = src_id_seq.cuda()
         if type(self.model) is not seq2seq.models.seq2seq.Seq2seq:
-            tree, loss = self.model.evaluate(src_id_seq, [len(src_seq)])
-            return [self.src_vocab.itos[tok] for tok in tree.leaves()]
+            tree, loss = self.model(src_id_seq, [len(src_seq)])
+            # tree0 = deepcopy(tree)
+            try:
+                tree = self.tree_to_id(tree)
+                return tree
+            except:
+                return ['a','b']
         else:
             softmax_list, _, other = self.model(src_id_seq, [len(src_seq)])
             length = other['length'][0]
