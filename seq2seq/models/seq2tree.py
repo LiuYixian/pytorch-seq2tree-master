@@ -12,8 +12,11 @@ class Seq2tree(nn.Module):
         self.decode_function = decode_function
 
     def flatten_parameters(self):
+
         self.encoder.rnn.flatten_parameters()
-        self.decoder.rnn.flatten_parameters()
+        self.decoder.layer_rnn.flatten_parameters()
+        self.decoder.layer_bi_rnn.flatten_parameters()
+        self.decoder.depth_rnn.flatten_parameters()
 
     def forward(self, input_variable, input_lengths=None, target_variable=None,
                 target_comp = None, teacher_forcing_ratio=0, trees = None, loss = None):

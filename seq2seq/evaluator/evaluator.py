@@ -2,7 +2,7 @@ from __future__ import print_function, division
 
 import torch
 import torchtext
-
+import traceback
 import seq2seq
 from seq2seq.loss import NLLLoss
 
@@ -31,8 +31,16 @@ class Evaluator(object):
     def compare(self, tree, tgt_tree):
         right = 0
         total = 0
-        if int(tree.label()) == int(tgt_tree.label()):
-            right += 1
+        try:
+            if int(tree.label()) == int(tgt_tree.label()):
+                right += 1
+        except:
+            print('pre tree is:')
+            print(tree)
+            print('tgt tree is:')
+            print(tgt_tree)
+            traceback.print_exc()
+
         total += 1
         for id, tgt_sub_tree in enumerate(tgt_tree):
             if id > len(tree) - 1 or isinstance(tgt_sub_tree, str) or isinstance(tree[id], str):
@@ -53,7 +61,7 @@ class Evaluator(object):
         Returns:
             loss (float): loss of the given model on the given dataset
         """
-        model.eval()
+        model.train()
 
         loss = self.loss
         loss.reset()

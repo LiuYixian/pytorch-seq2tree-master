@@ -120,7 +120,7 @@ class DecoderTree(BaseRNN):
             tgt_NT = Variable(torch.LongTensor([int(trees.label())])).view(1, -1)
             if torch.cuda.is_available():
                 tgt_NT = tgt_NT.cuda()
-            next_NT = this_NT if sampling else tgt_NT
+            next_NT = this_NT if random.random() > teacher_forcing_ratio else tgt_NT
             loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), tgt_NT[0])
         pre_tree = Tree_with_para(next_NT.data[0][0], [],
                                   depth_feature=torch.cat([self.embedding_NT(next_NT), self.embedding_NT(next_NT),self.embedding_NT(next_NT), self.embedding_NT(next_NT)],
@@ -160,7 +160,7 @@ class DecoderTree(BaseRNN):
                         tgt_word = Variable(torch.LongTensor([int(obj_tree[0])])).view(1, -1)
                         if torch.cuda.is_available():
                             tgt_word = tgt_word.cuda()
-                        next_word = this_word if sampling else tgt_word
+                        next_word = this_word if random.random() > teacher_forcing_ratio else tgt_word
                         loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
                     # left_structure_info, _ = self.layer_rnn(left_structure_info,
                     #                                         self.embedding(next_word))
@@ -185,9 +185,9 @@ class DecoderTree(BaseRNN):
                             tgt_NT = Variable(torch.LongTensor([int(obj_tree[sub_id].label())])).view(1, -1)
                             if torch.cuda.is_available():
                                 tgt_NT = tgt_NT.cuda()
-                            next_NT = this_NT if sampling else tgt_NT
+                            next_NT = this_NT if random.random() > teacher_forcing_ratio else tgt_NT
                             loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), tgt_NT[0])
-                            next_sub_trees.append(obj_tree[sub_id])
+
 
                         left_structure_info, _ = self.layer_rnn(self.embedding_NT(next_NT),left_structure_info)
                         semantic = self.update_vec(torch.cat([this_feature, self.embedding_NT(next_NT)],2))
@@ -196,12 +196,23 @@ class DecoderTree(BaseRNN):
                         pre_obj_tree.append(new_tree) # grow new sub_tree
                         if next_NT.data[0, 0] == 2:
                             break
+                        if self.training:
+                            next_sub_trees.append(obj_tree[sub_id])
                         next_pre_trees.append(new_tree) # sub_trees in next layer
 
             if len(next_pre_trees) > 0 and (not self.training or len(next_sub_trees)>0): #
                 # if training both pre_tree and tgt_tree have next layer
                 # if eval, pre_tree has next layer
-                layer_feature = torch.cat([self.embedding_NT(Variable(torch.LongTensor([sub_tree.label()]))).view(1,1,-1) for sub_tree in next_pre_trees], 1)
+
+                if torch.cuda.is_available():
+                    layer_feature = torch.cat(
+                        [self.embedding_NT(Variable(torch.LongTensor([sub_tree.label()]).cuda())).view(1, 1, -1) for sub_tree
+                         in next_pre_trees], 1)
+                else:
+                    layer_feature = torch.cat(
+                        [self.embedding_NT(Variable(torch.LongTensor([sub_tree.label()]))).view(1, 1, -1) for sub_tree
+                         in next_pre_trees], 1)
+
                 layer_bi_feature = self.layer_bi_rnn(layer_feature)[0]
                 for j, tree in enumerate(next_pre_trees):
                     tree.bi_layer_feature = layer_bi_feature[:, j, :].unsqueeze(1)
@@ -212,82 +223,6 @@ class DecoderTree(BaseRNN):
                 break
         return pre_tree, loss
 
-    # def evaluate(self, inputs=None, encoder_hidden=None, encoder_outputs=None,
-    #                 function=F.log_softmax, teacher_forcing_ratio=0, trees = None, loss= None):
-    #
-    #     decoder_hidden = self._init_state(encoder_hidden)
-    #     sampling = True
-    #
-    #     top_structure_info = Variable(torch.zeros(1, 1, self.hidden_size * 2))
-    #     left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
-    #     if torch.cuda.is_available():
-    #         top_structure_info = top_structure_info.cuda()
-    #         left_structure_info = left_structure_info.cuda()
-    #     semantic_info = decoder_hidden
-    #     this_feature = self.feature2attention(
-    #         torch.cat((top_structure_info, left_structure_info, semantic_info), 2))
-    #     if self.use_attention:
-    #         this_feature, attn = self.attention(this_feature, encoder_outputs)
-    #     this_NT = self.NT_out(this_feature).topk(1)[1].view(1, -1)
-    #     next_NT = this_NT
-    #     pre_tree = Tree_with_para(next_NT.data[0][0], [],
-    #                               depth_feature=torch.cat([self.embedding_NT(next_NT), self.embedding_NT(next_NT)],
-    #                                                       1).view(1, 1, -1),
-    #                               semantic_feature=semantic_info, att=attn)
-    #     pre_sub_trees = [pre_tree]  # sub_tree_with para in obj layer
-    #
-    #     for i in range(10):
-    #         next_pre_trees = []  # sub_tree_with para in next layer
-    #         left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
-    #         if torch.cuda.is_available():
-    #             left_structure_info = left_structure_info.cuda()
-    #         for id, pre_obj_tree in enumerate(pre_sub_trees):
-    #             top_structure_info = pre_obj_tree.depth_feature
-    #             semantic_info = pre_obj_tree.semantic_feature
-    #             if pre_obj_tree.label()==2:
-    #                 continue
-    #             if int(pre_obj_tree.label()) in self.pos_in_nt:
-    #                 # generate from Pos_tag
-    #                 this_feature = self.feature2attention(torch.cat((top_structure_info,
-    #                                                                  left_structure_info, semantic_info), 2))
-    #                 if self.use_attention:
-    #                     this_feature, attn = self.attention(this_feature, encoder_outputs)
-    #                 this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-    #                 next_word = this_word
-    #                 # left_structure_info, _ = self.layer_rnn(left_structure_info,
-    #                 #                                         self.embedding_NT(next_NT))
-    #                 pre_obj_tree.append(next_word.data[0][0])
-    #             else:
-    #                 for sub_id in range(10):
-    #                     # generate from nonterminal
-    #                     this_feature = self.feature2attention(torch.cat((top_structure_info,
-    #                                                                      left_structure_info, semantic_info), 2))
-    #                     if self.use_attention:
-    #                         this_feature, attn = self.attention(this_feature, encoder_outputs)
-    #                     this_NT = function(self.NT_out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-    #                     next_NT = this_NT
-    #
-    #                     left_structure_info, _ = self.layer_rnn(left_structure_info,
-    #                                                             self.embedding_NT(next_NT))
-    #                     new_tree = Tree_with_para(next_NT.data[0][0], [], layer_feature=left_structure_info,
-    #                                               semantic_feature=this_feature, parent=pre_obj_tree, att=attn)
-    #                     pre_obj_tree.append(new_tree)
-    #                     next_pre_trees.append(new_tree)
-    #                     if next_NT.data[0, 0] == 2:
-    #                         break
-    #         if len(next_pre_trees) > 0:
-    #             layer_feature = torch.cat([sub_tree.layer_feature for sub_tree in next_pre_trees], 1)
-    #             layer_bi_feature = self.layer_bi_rnn(layer_feature)[0]
-    #             for j, tree in enumerate(next_pre_trees):
-    #                 tree.bi_layer_feature = layer_bi_feature[:, j, :].unsqueeze(1)
-    #                 tree.depth_feature = self.depth_rnn(tree.parent.depth_feature, tree.bi_layer_feature)[0]
-    #         pre_sub_trees = next_pre_trees
-    #         # else:
-    #         #     break
-    #     # schedule sampling
-    #
-    #     ret_dict = pre_tree
-    #     return pre_tree, loss
 
     def _init_state(self, encoder_hidden):
         """ Initialize the encoder hidden state. """
