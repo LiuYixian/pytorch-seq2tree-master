@@ -33,27 +33,29 @@ def type_in():
     parser.add_argument('--resume', action='store_true', dest='resume',
                         default=False,
                         help='Indicates if training has to be resumed from the latest checkpoint')
-    parser.add_argument('--GPU', default=-1, dest='GPU', type=int)
+    parser.add_argument('--GPU', default=0, dest='GPU', type=int)
     parser.add_argument('--log-level', dest='log_level',
                         default='info',
                         help='Logging level.')
     parser.add_argument('--epoch', default=10, dest='epoch', type=int)
     parser.add_argument('--max-len', default=20, dest='max_len', type=int)
     parser.add_argument('--hidden-size', default=100, dest='hidden_size', type=int)
-    parser.add_argument('--word-embeeding-size', default=100, dest='word_embedding_size', type=int)
-    parser.add_argument('--nt-embeeding-size', default=100, dest='nt_embedding_size', type=int)
+    parser.add_argument('--word-embedding-size', default=300, dest='word_embedding_size', type=int)
+    parser.add_argument('--nt-embedding-size', default=100, dest='nt_embedding_size', type=int)
     parser.add_argument('--word-embedding', default=None, dest='word_embedding')
     parser.add_argument('--batch-size', default=1, dest='batch_size', type=int)
-    parser.add_argument('--checkpoint-every', default=50, dest='checkpoint_every', type=int)
+    parser.add_argument('--print-every', default=100, dest='print_every', type=int)
+    parser.add_argument('--checkpoint-every', default=5000 , dest='checkpoint_every', type=int)
     parser.add_argument('--print-every', default=10, dest='print_every', type=int)
     parser.add_argument('--bidirectional-encoder', default=True, dest='bidirectional_encoder')
+    parser.add_argument('--teacher-forcing-ratio', default=0.5, dest='teacher_forcing_ratio')
     parser.add_argument('--lr', default=1e-4, dest='lr', type=float)
     parser.add_argument('--drop-out', default=0.2, dest = 'drop_out', type=float)
     opt = parser.parse_args()
     return opt
 
 def train(opt):
-    LOG_FORMAT = '%(asctime)s %(name)-12s %(levelname)-8s %(message)s'
+    LOG_FORMAT = '%(asctime)s %(levelname)-8s %(message)s'
     logging.basicConfig(format=LOG_FORMAT, level=getattr(logging, opt.log_level.upper()))
     logging.info(opt)
     if int(opt.GPU)>=0:
@@ -124,6 +126,7 @@ def train(opt):
             loss.cuda()
         loss.reset()
         seq2tree = None
+        optimizer = None
         if not opt.resume:
             # Initialize model
             bidirectional = opt.bidirectional_encoder
@@ -150,7 +153,7 @@ def train(opt):
             # scheduler = StepLR(optimizer.optimizer, 1)
             # optimizer.set_scheduler(scheduler)
 
-        optimizer = Optimizer(optim.Adam(seq2tree.parameters(), lr=opt.lr), max_grad_norm=5)
+            optimizer = Optimizer(optim.Adam(seq2tree.parameters(), lr=opt.lr), max_grad_norm=5)
         # train
         t = SupervisedTrainer(loss=loss, batch_size=opt.batch_size,
                               checkpoint_every=opt.checkpoint_every,
@@ -175,9 +178,12 @@ def predict(predictor):
             print(predictor.predict(seq))
         else:
             tree_str = input("Type in a source sequence:")
-            tree = Tree.fromstring(tree_str)
-            seq = tree.leaves()
-            print(predictor.predict(seq,tree))
+            try:
+                tree = Tree.fromstring(tree_str)
+                seq = tree.leaves()
+                print(predictor.predict(seq,tree))
+            except:
+                print('The input is not a valid tree.')
 
 
 if __name__=='__main__':
