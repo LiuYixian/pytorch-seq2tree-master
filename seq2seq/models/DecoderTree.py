@@ -90,6 +90,7 @@ class DecoderTree(BaseRNN):
         self.layer_rnn = self.rnn_cell(self.nt_embedding_size, hidden_size, n_layers, batch_first = True, dropout = dropout_p)
         self.layer_bi_rnn = self.rnn_cell(self.nt_embedding_size, hidden_size, n_layers, batch_first=True, bidirectional=True, dropout=dropout_p)
         self.depth_rnn = self.rnn_cell(hidden_size*2, hidden_size*2, n_layers, batch_first = True, dropout = dropout_p)
+        self.word_rnn = self.rnn_cell(hidden_size+word_embedding_size, hidden_size, n_layers, batch_first = True, dropout = dropout_p)
         self.update_vec = nn.Linear(self.hidden_size+ self.nt_embedding_size, self.hidden_size )
         self.embedding_NT = nn.Embedding(self.nt_output_size, self.nt_embedding_size)
         self.embedding = nn.Embedding(self.output_size, self.word_embedding_size)
@@ -120,7 +121,7 @@ class DecoderTree(BaseRNN):
             tgt_NT = Variable(torch.LongTensor([int(trees.label())])).view(1, -1)
             if torch.cuda.is_available():
                 tgt_NT = tgt_NT.cuda()
-            next_NT = this_NT if random.random() > teacher_forcing_ratio else tgt_NT
+            next_NT = tgt_NT
             loss.eval_batch(function(self.NT_out(this_feature).view(1, -1)), tgt_NT[0])
         pre_tree = Tree_with_para(next_NT.data[0][0], [],
                                   depth_feature=torch.cat([self.embedding_NT(next_NT), self.embedding_NT(next_NT),self.embedding_NT(next_NT), self.embedding_NT(next_NT)],
@@ -144,28 +145,13 @@ class DecoderTree(BaseRNN):
                     obj_tree = sub_trees[id]
                 top_structure_info = pre_obj_tree.depth_feature
                 semantic_info = pre_obj_tree.semantic_feature
-
-                if int(pre_obj_tree.label()) in self.pos_in_nt:
-                    if self.training and int(obj_tree.label()) not in self.pos_in_nt:
+                if int(pre_obj_tree.label()) in self.pos_in_nt and self.training:
+                    if int(obj_tree.label()) not in self.pos_in_nt:
                         continue
-                    # generate from Pos_tag
-                    # this_feature = self.feature2attention(torch.cat((top_structure_info,
-                    #                                                  left_structure_info, semantic_info), 2))
-                    this_feature = pre_obj_tree.semantic_feature
-                    if self.use_attention:
-                        this_feature, attn = self.attention(this_feature, encoder_outputs)
-                    this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
-                    next_word = this_word
-                    if self.training:
-                        tgt_word = Variable(torch.LongTensor([int(obj_tree[0])])).view(1, -1)
-                        if torch.cuda.is_available():
-                            tgt_word = tgt_word.cuda()
-                        next_word = this_word if random.random() > teacher_forcing_ratio else tgt_word
-                        loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
-                    # left_structure_info, _ = self.layer_rnn(left_structure_info,
-                    #                                         self.embedding(next_word))
-                    pre_obj_tree.append(next_word.data[0][0])
-
+                    tgt_word = Variable(torch.LongTensor([int(obj_tree[0])])).view(1, -1)
+                    if torch.cuda.is_available():
+                        tgt_word = tgt_word.cuda()
+                    pre_obj_tree.target_word = tgt_word
                 else:
                     if self.training and int(obj_tree.label()) in self.pos_in_nt:
                         continue
@@ -221,6 +207,53 @@ class DecoderTree(BaseRNN):
                 pre_sub_trees = next_pre_trees
             else:# end grow
                 break
+
+        # generate words
+        if self.training:
+            nodes_with_tag = [a for a in pre_tree.subtrees() if a.label() in self.pos_in_nt and a.target_word is not None]
+        else:
+            nodes_with_tag = [a for a in pre_tree.subtrees() if
+                              a.label() in self.pos_in_nt]
+        left_structure_info = Variable(torch.zeros(1, 1, self.hidden_size))
+        s_word = Variable(torch.LongTensor([1])).view(1,-1)
+        if torch.cuda.is_available():
+            left_structure_info = left_structure_info.cuda()
+            s_word = s_word.cuda()
+        s_word = self.embedding(s_word)
+        for tag in nodes_with_tag:
+            left_structure_info, _ = self.word_rnn(torch.cat([s_word,tag.semantic_feature],2), left_structure_info)
+            if self.use_attention:
+                this_feature, attn = self.attention(left_structure_info, encoder_outputs)
+            this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
+            next_word = this_word
+            if self.training:
+                tgt_word = tag.target_word
+                next_word = this_word if random.random() > teacher_forcing_ratio else tgt_word
+                loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
+            tag.append(next_word.cpu().data[0][0])
+
+
+
+        # if int(pre_obj_tree.label()) in self.pos_in_nt:
+        #     if self.training and int(obj_tree.label()) not in self.pos_in_nt:
+        #         continue
+        #     # generate from Pos_tag
+        #     # this_feature = self.feature2attention(torch.cat((top_structure_info,
+        #     #                                                  left_structure_info, semantic_info), 2))
+        #     this_feature = pre_obj_tree.semantic_feature
+        #     if self.use_attention:
+        #         this_feature, attn = self.attention(this_feature, encoder_outputs)
+        #     this_word = function(self.out(this_feature).view(1, -1)).topk(1)[1].view(1, -1)
+        #     next_word = this_word
+        #     if self.training:
+        #         tgt_word = Variable(torch.LongTensor([int(obj_tree[0])])).view(1, -1)
+        #         if torch.cuda.is_available():
+        #             tgt_word = tgt_word.cuda()
+        #         next_word = this_word if random.random() > teacher_forcing_ratio else tgt_word
+        #         loss.eval_batch(function(self.out(this_feature).view(1, -1)), tgt_word[0])
+        #     # left_structure_info, _ = self.layer_rnn(left_structure_info,
+        #     #                                         self.embedding(next_word))
+        #     pre_obj_tree.append(next_word.data[0][0])
         return pre_tree, loss
 
 

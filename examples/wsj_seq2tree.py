@@ -33,22 +33,21 @@ def type_in():
     parser.add_argument('--resume', action='store_true', dest='resume',
                         default=False,
                         help='Indicates if training has to be resumed from the latest checkpoint')
-    parser.add_argument('--GPU', default=0, dest='GPU', type=int)
+    parser.add_argument('--GPU', default=-1, dest='GPU', type=int)
     parser.add_argument('--log-level', dest='log_level',
                         default='info',
                         help='Logging level.')
     parser.add_argument('--epoch', default=10, dest='epoch', type=int)
     parser.add_argument('--max-len', default=20, dest='max_len', type=int)
-    parser.add_argument('--hidden-size', default=100, dest='hidden_size', type=int)
-    parser.add_argument('--word-embedding-size', default=300, dest='word_embedding_size', type=int)
-    parser.add_argument('--nt-embedding-size', default=100, dest='nt_embedding_size', type=int)
+    parser.add_argument('--hidden-size', default=32, dest='hidden_size', type=int)
+    parser.add_argument('--word-embedding-size', default=100, dest='word_embedding_size', type=int)
+    parser.add_argument('--nt-embedding-size', default=32, dest='nt_embedding_size', type=int)
     parser.add_argument('--word-embedding', default=None, dest='word_embedding')
     parser.add_argument('--batch-size', default=1, dest='batch_size', type=int)
+    parser.add_argument('--checkpoint-every', default=500000 , dest='checkpoint_every', type=int)
     parser.add_argument('--print-every', default=100, dest='print_every', type=int)
-    parser.add_argument('--checkpoint-every', default=5000 , dest='checkpoint_every', type=int)
-    parser.add_argument('--print-every', default=10, dest='print_every', type=int)
     parser.add_argument('--bidirectional-encoder', default=True, dest='bidirectional_encoder')
-    parser.add_argument('--teacher-forcing-ratio', default=0.5, dest='teacher_forcing_ratio')
+    parser.add_argument('--teacher-forcing-ratio', default=0.5, dest='teacher_forcing_ratio', type=float)
     parser.add_argument('--lr', default=1e-4, dest='lr', type=float)
     parser.add_argument('--drop-out', default=0.2, dest = 'drop_out', type=float)
     opt = parser.parse_args()

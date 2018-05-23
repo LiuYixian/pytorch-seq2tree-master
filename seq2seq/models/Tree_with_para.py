@@ -14,3 +14,4 @@ class Tree_with_para(Tree):
         self.semantic_feature = semantic_feature
         self.parent = parent
         self.att = att
+        self.target_word = None

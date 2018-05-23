@@ -16,7 +16,7 @@ class SourceField(torchtext.data.Field):
         kwargs['include_lengths'] = True
         kwargs['pad_token'] = None
         kwargs['unk_token'] = '<unk>'
-        kwargs['init_token'] = None
+        kwargs['init_token'] = '<sos>'
         kwargs['eos_token'] = None
 
         super(SourceField, self).__init__(**kwargs)
