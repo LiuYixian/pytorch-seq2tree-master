@@ -61,12 +61,12 @@ class Evaluator(object):
         Returns:
             loss (float): loss of the given model on the given dataset
         """
-        model.train()
+        model.eval()
 
         loss = self.loss
         loss.reset()
         match = 0
-        total = 0
+        total_w = 0
 
         device = None if torch.cuda.is_available() else -1
         batch_iterator = torchtext.data.BucketIterator(
@@ -94,7 +94,7 @@ class Evaluator(object):
             else:
                 trees = getattr(batch, seq2seq.tree_field_name)
                 tree, loss = model(input_variables, input_lengths.tolist(),
-                                                               target_variables, trees = trees, loss = loss)
+                                                                loss = loss)
                 right, total = self.compare(tree, trees)
                 tree_acc = right / max(len([a for a in trees.subtrees()]), len([a for a in tree.subtrees()]))
                 target = [int(a) for a in trees.leaves()]
@@ -105,7 +105,7 @@ class Evaluator(object):
                             match += 1
                     except:
                         x=1
-                total += len(target)
+                total_w += len(target)
                 # return loss.get_loss(), self.tree_acc(trees, tree)
 
 
@@ -113,6 +113,6 @@ class Evaluator(object):
         if total == 0:
             accuracy = float('nan')
         else:
-            accuracy = match / total
+            accuracy = match / total_w
 
         return loss.get_loss(), accuracy, tree_acc

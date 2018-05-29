@@ -4,8 +4,8 @@ import logging
 import torch
 from torch.optim.lr_scheduler import StepLR
 import sys
-sys.path=['/home/liuyx/PycharmProjects/pytorch-seq2seq-master/examples']+sys.path
-sys.path=['/home/liuyx/PycharmProjects/pytorch-seq2seq-master']+sys.path
+sys.path=['/home/liuyx/PycharmProjects/pytorch-seq2tree-master/examples']+sys.path
+sys.path=['/home/liuyx/PycharmProjects/pytorch-seq2tree-master']+sys.path
 # import seq2seq
 import torchtext
 from seq2seq.trainer import SupervisedTrainer
@@ -16,6 +16,7 @@ from seq2seq.dataset import SourceField, TargetField, CompField, NTField, TreeFi
 from seq2seq.evaluator import Predictor
 from seq2seq.util.checkpoint import Checkpoint
 from nltk.tree import Tree
+from seq2seq.evaluator import Evaluator
 from torch import optim
 import pickle
 
@@ -44,7 +45,7 @@ def type_in():
     parser.add_argument('--nt-embedding-size', default=32, dest='nt_embedding_size', type=int)
     parser.add_argument('--word-embedding', default=None, dest='word_embedding')
     parser.add_argument('--batch-size', default=1, dest='batch_size', type=int)
-    parser.add_argument('--checkpoint-every', default=500000 , dest='checkpoint_every', type=int)
+    parser.add_argument('--checkpoint-every', default=10000 , dest='checkpoint_every', type=int)
     parser.add_argument('--print-every', default=100, dest='print_every', type=int)
     parser.add_argument('--bidirectional-encoder', default=True, dest='bidirectional_encoder')
     parser.add_argument('--teacher-forcing-ratio', default=0.5, dest='teacher_forcing_ratio', type=float)
@@ -133,6 +134,7 @@ def train(opt):
                                  bidirectional=bidirectional, variable_lengths=True)
             decoder = DecoderTree(len(src.vocab), opt.word_embedding_size, opt.nt_embedding_size, len(nt.vocab),
                                   max_len, hidden_size * 2 if bidirectional else hidden_size,
+                                  sos_id=nt_vocab.stoi['<sos>'], eos_id=nt_vocab.stoi['<eos>'],
                                  dropout_p=0.2, use_attention=True, bidirectional=bidirectional,
                                   pos_in_nt = pos_in_nt)
 
@@ -165,7 +167,7 @@ def train(opt):
                           resume=opt.resume)
 
     predictor = Predictor(seq2tree, input_vocab, nt_vocab)
-    return predictor
+    return predictor, dev, train
 def predict(predictor):
     while True:
         tree_or_sentence = input("Type in a tree or a sentence?")
@@ -187,5 +189,10 @@ def predict(predictor):
 
 if __name__=='__main__':
     opt = type_in()
-    predictor = train(opt)
+    predictor, dev,train = train(opt)
+    evaluator = Evaluator(loss=NLLLoss(), batch_size=1)
+    # dev_loss, accuracy, tree_acc = evaluator.evaluate(predictor.model, dev)
+    # print(accuracy)
+    # dev_loss, accuracy, tree_acc = evaluator.evaluate(predictor.model, train)
+    # print(accuracy)
     predict(predictor)
